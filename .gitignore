@@ -1,0 +1,17 @@
+# Object files
+*.o
+*.bin
+
+# ISO images
+*.iso
+
+# Temporary directories
+iso/
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
