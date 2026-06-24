@@ -42,7 +42,7 @@ The project name comes from the **Manpupuner plateau** in the Northern Urals. Se
 
 **GitHub:** [https://github.com/Kafemin/Manpupuner_42](https://github.com/Kafemin/Manpupuner_42)
 
-**Original idea discussion:** [https://github.com/Kafemin/Manpupuner_42/discussions](https://github.com/Kafemin/Manpupuner_42/discussions)
+**Original idea:** [https://github.com/Kafemin/Manpupuner_42](https://github.com/Kafemin/Manpupuner_42)
 
 ---
 
