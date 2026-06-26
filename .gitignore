@@ -1,17 +1,29 @@
 # Object files
 *.o
 *.bin
-
-# ISO images
+*.elf
 *.iso
 
-# Temporary directories
+# Build directories
 iso/
-__pycache__/
-*.pyc
+build/
+
+# Kernel binary
+kernel.bin
+
+# Module data
+module_data.o
+
+# Temporary files
+*.swp
+*.swo
+*~
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

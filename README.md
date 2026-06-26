@@ -2,7 +2,7 @@
 
 **Hybrid Arbiter Kernel — Proof of Concept**
 
-[![Version](https://img.shields.io/badge/version-0.1-blue)](https://github.com/Kafemin/Manpupuner_42)
+[![Version](https://img.shields.io/badge/version-0.2-alpha-blue)](https://github.com/kafemin/manpupuner_kernel)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
 ---
@@ -13,7 +13,7 @@
 
 This kernel is experimental software. It may contain bugs, errors, or unexpected behavior. It has been tested **only** in the QEMU emulator. Running on real hardware is at your own risk. The author assumes no responsibility for any damage, data loss, or hardware failure that may occur.
 
-**Kernel size: ~13 KB (less than 20 KB).**
+**Kernel size: ~18-20 KB.**
 
 ---
 
@@ -27,22 +27,60 @@ The project name comes from the **Manpupuner plateau** in the Northern Urals. Se
 
 ---
 
-## ⚠️ Known Limitations
+## 📦 Version History
 
-- **Keyboard:** PS/2 driver works in QEMU. Real hardware may behave differently.
-- **Filesystem:** Virtual in-memory only. No real disk support.
-- **Graphics:** Text mode only (VGA).
-- **Networking:** Not implemented.
-- **Multitasking:** Not implemented.
-- **Real hardware:** Untested. Use at your own risk.
+### v0.1 — Concept Proof (Python)
+
+- ✅ Python prototype demonstrating 7 syscalls
+- ✅ POSIX and NT compatibility layers
+- ✅ Virtual filesystem in memory
+- ✅ Unit tests for all 7 syscalls
+- ✅ Full documentation (RU/EN)
+
+### v0.2-alpha — Kernel Implementation (C/Assembly)
+
+- ✅ Bootloader (Multiboot, GRUB)
+- ✅ VGA text mode output
+- ✅ UART (serial port) for debugging
+- ✅ 7 system calls implemented in C
+- ✅ Virtual filesystem (in-memory)
+- ✅ Memory manager (alloc/free)
+- ✅ Process scheduler (manual yield)
+- ✅ Context switching (assembly)
+- ✅ Emergency shell (reboot, dump, load, help, version, syscalls)
+- ✅ Module loader (load keyboard.bin — entry disabled)
+- ✅ Keyboard driver (PS/2) in kernel
+- ✅ Backspace support
+- ✅ Shift support (uppercase, _, ?)
+
+### v0.3 — Planned
+
+- ⏳ Stable interrupts (IDT)
+- ⏳ Automatic process switching (timer)
+- ⏳ Working modules (keyboard, drivers)
+- ⏳ Real filesystem (FAT32)
+- ⏳ ELF loader
+- ⏳ Full command documentation
+
+---
+
+## ⚠️ Known Issues (v0.2-alpha)
+
+| Issue | Description |
+|:---|:---|
+| **`load <module>`** | Loading a module with `entry()` enabled causes a system reboot. For safety, `entry()` is currently disabled in `load_module()`. |
+| **Module not found** | Works correctly — prints "Module file not found". No reboot. |
+| **Arrow keys (↑ ↓ ← →)** | Not supported. Do not work. |
+| **Keyboard keys** | Some keys may not work correctly (tested on a laptop keyboard). QEMU emulation may behave differently. |
+| **Interrupts (IDT)** | Not yet stable. Disabled by default. |
+| **Automatic multitasking** | Not implemented. Only manual `yield` is available. |
+| **Real hardware** | Untested. Use only in QEMU. |
 
 ---
 
 ## Repository
 
-**GitHub:** [https://github.com/Kafemin/Manpupuner_42](https://github.com/Kafemin/Manpupuner_42)
-
-**Original idea discussion:** [https://github.com/kafemin/Manpupuner_42/discussions](https://github.com/kafemin/Manpupuner_42/discussions)
+**GitHub:** [https://github.com/kafemin/manpupuner_kernel](https://github.com/kafemin/manpupuner_kernel)
 
 ---
 
@@ -82,8 +120,8 @@ The project name comes from the **Manpupuner plateau** in the Northern Urals. Se
 
 ```bash
 # Clone
-git clone https://github.com/Kafemin/Manpupuner_42.git
-cd Manpupuner_42
+git clone https://github.com/kafemin/manpupuner_kernel.git
+cd manpupuner_kernel
 
 # Build
 chmod +x build.sh run.sh
@@ -153,7 +191,7 @@ If you want to try it on real hardware:
 
 In QEMU, the keyboard may not work correctly with the default PS/2 emulation. This is a known issue with QEMU's PS/2 emulation.
 
-**Solution:** Use the keyboard module provided in `src/keyboard_module.c`. It handles PS/2 scancodes properly.
+**Solution:** Use the keyboard module provided in `modules/keyboard_module.c`. It handles PS/2 scancodes properly.
 
 **If the keyboard still doesn't work:**
 
@@ -167,11 +205,37 @@ In QEMU, the keyboard may not work correctly with the default PS/2 emulation. Th
    - Spacebar
    - Backspace
    - Enter
-   - Arrow keys (print `[UP]`, `[DOWN]`, `[LEFT]`, `[RIGHT]`)
+   - Shift + letters (uppercase)
+   - Shift + '-' = '_'
+   - Shift + '/' = '?'
+
+**Note:** Arrow keys (↑ ↓ ← →) are **not supported** in the current version.
 
 ### ISO Size
 
-The ISO is ~12 MB, but the kernel itself is only ~13 KB. The size comes from GRUB bootloader modules included in the ISO.
+The ISO is ~12 MB, but the kernel itself is only ~18-20 KB. The size comes from GRUB bootloader modules included in the ISO.
+
+---
+
+## Project Structure
+
+```
+manpupuner_kernel/
+├── boot.asm           # Bootloader (Multiboot)
+├── build.sh           # ISO build script
+├── docs/
+│   └── architecture.md # Architecture documentation
+├── .gitignore         # Ignored files
+├── kernel.c           # Kernel (7 syscalls, VGA, UART, FS, memory, processes, shell)
+├── LICENSE            # MIT License
+├── linker.ld          # Linker script for kernel
+├── Makefile           # Build system
+├── modules/
+│   ├── keyboard_module.c # Keyboard module
+│   └── module.ld      # Linker script for modules
+├── README.md          # This file
+└── run.sh             # QEMU launcher
+```
 
 ---
 
