@@ -101,18 +101,46 @@ The project name comes from the **Manpupuner plateau** in the Northern Urals. Se
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│           APPLICATIONS / SHELL           │
-├─────────────────────────────────────────┤
-│          KEYBOARD MODULE (PS/2)          │
-│         (separate component)             │
-├─────────────────────────────────────────┤
-│              ARBITER KERNEL              │
-│            7 basic syscalls              │
-├─────────────────────────────────────────┤
-│              HARDWARE (VGA, PS/2)        │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                   APPLICATIONS / SHELL                  │
+├─────────────────────────────────────────────────────────┤
+│               KEYBOARD MODULE (PS/2)                    │
+│              (separate component)                       │
+├─────────────────────────────────────────────────────────┤
+│                    ARBITER KERNEL                       │
+│                  7 basic syscalls                       │
+│                                                         │
+│   ┌───────────────┐  ┌──────────────┐  ┌────────────┐ │
+│   │   Microkernel  │  │   Monolithic │  │   Hybrid   │ │
+│   │   (MINIX, L4)  │  │   (Linux)    │  │  (Windows, │ │
+│   │                │  │              │  │   macOS)   │ │
+│   └───────────────┘  └──────────────┘  └────────────┘ │
+│                                                         │
+│   Manpupuner_42 combines ideas from all three:         │
+│   • Microkernel — minimal core, modular drivers        │
+│   • Monolithic — speed, direct syscalls                │
+│   • Hybrid — balance between flexibility & speed       │
+├─────────────────────────────────────────────────────────┤
+│              HARDWARE (VGA, PS/2, UART)                │
+└─────────────────────────────────────────────────────────┘
 ```
+
+### Kernel Architecture Comparison
+
+| Architecture | Examples | Manpupuner_42 Influence |
+|:---|:---|:---|
+| **Microkernel** | MINIX, L4, GNU Hurd | Minimal core, drivers as modules |
+| **Monolithic** | Linux, BSD | Fast syscalls, direct hardware access |
+| **Hybrid** | Windows NT, macOS/XNU | Balance of speed and modularity |
+| **Exokernel** | MIT Exokernel | Minimal abstraction, direct resource access |
+| **Unikernel** | MirageOS, IncludeOS | Single-address-space, library OS |
+
+**Manpupuner_42** is a **hybrid arbiter kernel** that takes:
+- **Microkernel philosophy**: Keep the core minimal (only 7 syscalls), move everything else to modules
+- **Monolithic performance**: Direct syscalls without message passing overhead
+- **Hybrid flexibility**: Optional module loading for extended functionality
+- **Exokernel ideas**: Applications can manage their own resources
+- **Unikernel simplicity**: Small footprint, single-purpose design
 
 ---
 

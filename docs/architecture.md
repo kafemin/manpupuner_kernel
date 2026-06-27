@@ -22,12 +22,203 @@ Manpupuner_42 is a **hybrid arbiter kernel** that provides only **7 basic system
 
 ---
 
+## Kernel Architecture Reference
+
+Understanding Manpupuner_42 requires knowing the landscape of kernel architectures. Here's how it compares to existing designs:
+
+### 1. Monolithic Kernel
+
+**Examples:** Linux, BSD, Unix System V
+
+**Characteristics:**
+- All OS services run in kernel space
+- Fast system calls (no context switching between components)
+- Everything is tightly integrated
+- Large kernel size (Linux: ~10-30 MB)
+
+**Manpupuner_42 influence:** Direct syscall performance, speed-first approach
+
+```
+┌─────────────────────────────────────┐
+│         USER SPACE                   │
+│   Applications  │  Shell            │
+├─────────────────────────────────────┤
+│         KERNEL SPACE                 │
+│  ┌──────────────────────────────┐   │
+│  │  File System  │  Network     │   │
+│  ├───────────────┼──────────────┤   │
+│  │  Drivers      │  Scheduler   │   │
+│  ├───────────────┼──────────────┤   │
+│  │  Memory Mgmt  │  IPC         │   │
+│  └──────────────────────────────┘   │
+│         HARDWARE                    │
+└─────────────────────────────────────┘
+```
+
+### 2. Microkernel
+
+**Examples:** MINIX, L4, GNU Hurd, QNX, Mach
+
+**Characteristics:**
+- Minimal kernel core (IPC, scheduling, memory management)
+- Drivers and services run as user-space processes
+- Message passing between components
+- Small kernel size (L4: ~10-20 KB)
+
+**Manpupuner_42 influence:** Minimal core, modular drivers loaded separately
+
+```
+┌─────────────────────────────────────┐
+│         USER SPACE                   │
+│  Applications  │  Drivers  │  FS    │
+│       ↕ IPC    │  ↕ IPC    │  ↕ IPC │
+├─────────────────────────────────────┤
+│         MICROKERNEL                  │
+│  ┌──────────────────────────────┐   │
+│  │   IPC  │  Scheduler          │   │
+│  ├────────┼─────────────────────┤   │
+│  │   Memory Mgmt  │  Syscalls   │   │
+│  └──────────────────────────────┘   │
+│         HARDWARE                    │
+└─────────────────────────────────────┘
+```
+
+### 3. Hybrid Kernel
+
+**Examples:** Windows NT, macOS/XNU, DragonFly BSD
+
+**Characteristics:**
+- Mix of monolithic and microkernel approaches
+- Some services in kernel, some in user space
+- Balance of performance and modularity
+- Kernel size: ~1-10 MB
+
+**Manpupuner_42 influence:** Balance between flexibility and speed, modular loading
+
+```
+┌─────────────────────────────────────┐
+│         USER SPACE                   │
+│  Apps  │  Services  │  Drivers      │
+├─────────────────────────────────────┤
+│         HYBRID KERNEL                │
+│  ┌───────────────┐  ┌────────────┐  │
+│  │   Core        │  │  Modules   │  │
+│  │  Scheduler    │  │  FS        │  │
+│  │  IPC          │  │  Network   │  │
+│  │  Memory Mgmt  │  │  Graphics  │  │
+│  └───────────────┘  └────────────┘  │
+│         HARDWARE                    │
+└─────────────────────────────────────┘
+```
+
+### 4. Exokernel
+
+**Examples:** MIT Exokernel, Nemesis
+
+**Characteristics:**
+- Minimal abstraction of hardware
+- Applications manage their own resources
+- Library OS approach
+- Tiny kernel core
+
+**Manpupuner_42 influence:** Minimal abstraction, direct resource access (ID-based)
+
+```
+┌─────────────────────────────────────┐
+│         USER SPACE                   │
+│  App 1  │  App 2  │  LibOS  │  LibOS│
+│    ↕    │    ↕    │    ↕    │    ↕   │
+├─────────────────────────────────────┤
+│         EXOKERNEL                    │
+│  ┌──────────────────────────────┐   │
+│  │   Secure HW Access            │   │
+│  ├──────────────────────────────┤   │
+│  │   Resource Management         │   │
+│  └──────────────────────────────┘   │
+│         HARDWARE                    │
+└─────────────────────────────────────┘
+```
+
+### 5. Unikernel
+
+**Examples:** MirageOS, IncludeOS, OSv
+
+**Characteristics:**
+- Single-address-space
+- Library operating system
+- Compiled for specific application
+- Very small size (~1 MB)
+
+**Manpupuner_42 influence:** Small footprint, single-purpose design philosophy
+
+```
+┌─────────────────────────────────────┐
+│         UNIKERNEL                    │
+│  ┌──────────────────────────────┐   │
+│  │   Application + Kernel        │   │
+│  │   (single address space)      │   │
+│  └──────────────────────────────┘   │
+│         HARDWARE                    │
+└─────────────────────────────────────┘
+```
+
+---
+
+## Manpupuner_42 Architecture
+
+Manpupuner_42 is a **hybrid arbiter kernel** that combines elements from all major kernel architectures:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    APPLICATIONS / SHELL                     │
+│  (User processes, shell commands, module execution)        │
+├─────────────────────────────────────────────────────────────┤
+│                    MODULES (optional)                       │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  Keyboard │  Network │  Graphics │  File Systems    │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  Loaded dynamically via `load <module>` command             │
+│  (entry() disabled in v0.2 for stability)                   │
+├─────────────────────────────────────────────────────────────┤
+│                    ARBITER KERNEL (~18-20 KB)               │
+│  ┌───────────┐  ┌────────────┐  ┌────────────────────┐    │
+│  │ Syscalls  │  │ Scheduler  │  │ Memory Manager     │    │
+│  │ (7 basic) │  │ (manual    │  │ (alloc/free)       │    │
+│  │           │  │  yield)    │  │                    │    │
+│  └───────────┘  └────────────┘  └────────────────────┘    │
+│  ┌───────────┐  ┌────────────┐  ┌────────────────────┐    │
+│  │ FS Core   │  │ VGA/UART  │  │ Context Switching  │    │
+│  │ (virtual) │  │ (console) │  │ (assembly)         │    │
+│  └───────────┘  └────────────┘  └────────────────────┘    │
+├─────────────────────────────────────────────────────────────┤
+│                    HARDWARE                                 │
+│  ┌───────────┐  ┌────────────┐  ┌────────────────────┐    │
+│  │ VGA       │  │ PS/2       │  │ UART (COM1)        │    │
+│  │ 0xB8000   │  │ Keyboard   │  │ 115200 baud        │    │
+│  └───────────┘  └────────────┘  └────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### How Manpupuner_42 Combines Kernel Architectures
+
+| Architecture | Borrowed Concept | Implementation |
+|:---|:---|:---|
+| **Monolithic** | Performance, direct syscalls | Syscalls are direct C functions, no message passing overhead |
+| **Microkernel** | Minimal core, modularity | Only 7 syscalls, drivers as separate modules |
+| **Hybrid** | Balance of speed and flexibility | Core in kernel, optional modules loaded dynamically |
+| **Exokernel** | Minimal abstraction | ID-based resource access, minimal layers |
+| **Unikernel** | Small footprint | ~18-20 KB, single-purpose design |
+
+---
+
 ## Why 7 Calls?
 
 The number 7 is symbolic:
 - 7 stone pillars on the Manpupuner plateau
 - 7 basic operations cover 90% of system needs
 - Minimalism reduces kernel size
+- Easier to verify and secure
 
 ## System Calls
 
@@ -90,6 +281,7 @@ All additional functionality is designed to be implemented as separate modules:
 3. **Simple interface** — ID-based access
 4. **Transparent debugging** — logging and traceability (UART)
 5. **Isolation** — contexts for different layers
+6. **Cross-architecture inspiration** — best ideas from monolithic, microkernel, hybrid, exokernel, and unikernel
 
 ## Project Structure
 
@@ -125,3 +317,13 @@ The idea was born in a discussion between Kaskov Aleksandr and DeepSeek AI. The 
 ## Real Hardware Warning
 
 This kernel has **not** been tested on real hardware. The author has only tested it in the QEMU emulator. Use on real hardware at your own risk.
+
+---
+
+## Further Reading
+
+- **Monolithic Kernel:** [Linux Kernel Documentation](https://www.kernel.org/doc/)
+- **Microkernel:** [MINIX 3](https://www.minix3.org/), [L4](https://l4hq.org/)
+- **Hybrid Kernel:** [Windows NT Architecture](https://learn.microsoft.com/en-us/windows/win32/sysinfo/windows-kernel)
+- **Exokernel:** [MIT Exokernel Paper](https://pdos.csail.mit.edu/archive/exo/)
+- **Unikernel:** [MirageOS](https://mirage.io/), [IncludeOS](https://www.includeos.org/)
