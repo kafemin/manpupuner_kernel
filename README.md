@@ -2,7 +2,7 @@
 
 **Hybrid Arbiter Kernel — Proof of Concept**
 
-[![Version](https://img.shields.io/badge/version-0.3-alpha-blue)](https://github.com/kafemin/manpupuner_kernel)
+[![Version](https://img.shields.io/github/v/release/kafemin/manpupuner_kernel)](https://github.com/kafemin/manpupuner_kernel/releases)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
 ---
