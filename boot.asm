@@ -1,12 +1,5 @@
-; boot.asm — загрузчик Manpupuner_42 (Multiboot)
-; Архитектура: x86 (32-bit)
-; Сборка: nasm -f elf32 boot.asm -o boot.o
-
+; boot.asm — Manpupuner_42 Multiboot loader
 bits 32
-
-; ============================================================
-; Multiboot-заголовок (для GRUB)
-; ============================================================
 
 section .multiboot
 align 4
@@ -14,13 +7,10 @@ align 4
     dd 0x00
     dd -(0x1BADB002 + 0x00)
 
-; ============================================================
-; Точка входа
-; ============================================================
-
 section .text
 global start
 extern kernel_main
+extern irq_handler_c
 
 start:
     mov esp, stack_top
@@ -30,42 +20,53 @@ start:
     cli
     hlt
 
-; ============================================================
-; Переключение контекста
-; ============================================================
-
 global switch_context
 switch_context:
+    mov eax, [esp + 4]
+    mov ecx, [esp + 12]
+    push ebp
+    push ebx
+    push esi
+    push edi
+    mov [eax], esp
+    mov esp, ecx
+    pop edi
+    pop esi
+    pop ebx
+    pop ebp
+    ret
+
+global load_idt
+load_idt:
+    lidt [idt_desc]
+    ret
+
+global reload_idt
+reload_idt:
+    lidt [idt_desc]
+    ret
+
+global irq_handler
+irq_handler:
     pusha
     push ds
     push es
     push fs
     push gs
-
-    mov eax, [esp + 36]
-    mov [eax], esp
-
-    mov eax, [esp + 40]
-    mov ecx, [esp]
-    mov [eax], ecx
-
-    mov eax, [esp + 44]
-    mov esp, [eax]
-
-    mov eax, [esp + 48]
-    mov ebx, [eax]
-
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    call irq_handler_c
+    mov al, 0x20
+    out 0x20, al
     pop gs
     pop fs
     pop es
     pop ds
     popa
+    iret
 
-    jmp ebx
-
-; ============================================================
-; Стек
-; ============================================================
+extern idt_desc
 
 section .bss
 align 16

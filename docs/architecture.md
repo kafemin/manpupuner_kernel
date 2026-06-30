@@ -2,29 +2,28 @@
 
 ## ⚠️ Disclaimer
 
-This is a Proof of Concept. The kernel is experimental and has been tested only in the QEMU emulator. Running on real hardware is at your own risk.
+This is a Proof of Concept. The kernel is experimental and has been tested **only** in the QEMU emulator. Running on real hardware is at your own risk.
 
-**Kernel size: ~18-20 KB (v0.2-alpha).**
+**Kernel size: ~18-20 KB (v0.3-alpha).**
 
 ---
 
 ## Core Concept
 
-Manpupuner_42 is a **hybrid arbiter kernel** that provides only **7 basic system calls**. All other logic (file systems, drivers, network, graphics) is designed to be loaded modularly as separate components.
+**Manpupuner_42** is a hybrid arbiter kernel that provides only **7 basic system calls**. All other logic (file systems, drivers, network, graphics) is designed to be loaded modularly as separate components.
 
-**Version History:**
+**Versions:**
 
 | Version | Description | Size |
 |:---|:---|:---|
 | **v0.1** | Python prototype (PoC) | ~50 KB |
-| **v0.2-alpha** | C/Assembly kernel | ~18-20 KB |
-| **v0.3** | Planned: stable interrupts, working modules | ~25 KB |
+| **v0.3-alpha** | C/Assembly kernel with interrupts and multitasking | ~18-20 KB |
 
 ---
 
 ## Kernel Architecture Reference
 
-Understanding Manpupuner_42 requires knowing the landscape of kernel architectures. Here's how it compares to existing designs:
+To understand Manpupuner_42, it helps to know the landscape of kernel architectures. Here's how it compares to existing designs:
 
 ### 1. Monolithic Kernel
 
@@ -179,17 +178,17 @@ Manpupuner_42 is a **hybrid arbiter kernel** that combines elements from all maj
 │  └─────────────────────────────────────────────────────┘   │
 │                                                             │
 │  Loaded dynamically via `load <module>` command             │
-│  (entry() disabled in v0.2 for stability)                   │
+│  (temporarily disabled for stability)                       │
 ├─────────────────────────────────────────────────────────────┤
 │                    ARBITER KERNEL (~18-20 KB)               │
 │  ┌───────────┐  ┌────────────┐  ┌────────────────────┐    │
 │  │ Syscalls  │  │ Scheduler  │  │ Memory Manager     │    │
-│  │ (7 basic) │  │ (manual    │  │ (alloc/free)       │    │
-│  │           │  │  yield)    │  │                    │    │
+│  │ (7 basic) │  │ (auto-    │  │ (alloc/free)       │    │
+│  │           │  │  matic)   │  │                    │    │
 │  └───────────┘  └────────────┘  └────────────────────┘    │
 │  ┌───────────┐  ┌────────────┐  ┌────────────────────┐    │
-│  │ FS Core   │  │ VGA/UART  │  │ Context Switching  │    │
-│  │ (virtual) │  │ (console) │  │ (assembly)         │    │
+│  │ IDT       │  │ VGA/UART  │  │ Context Switching  │    │
+│  │ (stable)  │  │ (console) │  │ (assembly)         │    │
 │  └───────────┘  └────────────┘  └────────────────────┘    │
 ├─────────────────────────────────────────────────────────────┤
 │                    HARDWARE                                 │
@@ -208,7 +207,7 @@ Manpupuner_42 is a **hybrid arbiter kernel** that combines elements from all maj
 | **Microkernel** | Minimal core, modularity | Only 7 syscalls, drivers as separate modules |
 | **Hybrid** | Balance of speed and flexibility | Core in kernel, optional modules loaded dynamically |
 | **Exokernel** | Minimal abstraction | ID-based resource access, minimal layers |
-| **Unikernel** | Small footprint | ~18-20 KB, single-purpose design |
+| **Unikernel** | Small footprint | ~18-20 KB |
 
 ---
 
@@ -232,7 +231,7 @@ The number 7 is symbolic:
 | 6 | FREE_MEMORY | Free memory | `id` |
 | 7 | LIST_FILES | List all file IDs | `count` |
 
-## Kernel Components (v0.2-alpha)
+## Kernel Components (v0.3-alpha)
 
 | Component | Status | Description |
 |:---|:---|:---|
@@ -240,30 +239,145 @@ The number 7 is symbolic:
 | VGA text output | ✅ | 80x25, 0xB8000 |
 | UART (serial) | ✅ | COM1, 115200 baud |
 | 7 system calls | ✅ | All implemented in C |
+| IDT (interrupts) | ✅ | Stable, PIC remap |
+| Timer (PIT) | ✅ | 100 Hz, process switching |
+| Scheduler | ✅ | Automatic (timer-based) |
 | Virtual filesystem | ✅ | In-memory, 16 files |
 | Memory manager | ✅ | alloc/free, 32 blocks |
-| Process scheduler | ✅ | Manual yield, 16 processes |
-| Context switching | ✅ | Assembly (pusha/popa) |
-| Emergency shell | ✅ | reboot, dump, load, help, version, syscalls |
-| Module loader | ⚠️ | Loads modules, but entry() is disabled (causes reboot) |
-| Keyboard driver | ✅ | PS/2, in kernel (temporary) |
-| Backspace support | ✅ | Works |
-| Shift support | ✅ | Uppercase, _, ? |
-| Timer (PIT) | ⚠️ | In progress |
-| IDT (interrupts) | ⚠️ | In progress |
-| Automatic process switching | ❌ | Planned for v0.3 |
-| Arrow keys | ❌ | Not supported |
+| Context switching | ✅ | Assembly |
+| Shell | ✅ | Prompt `S> ` |
+| Keyboard (PS/2) | ✅ | In kernel, Shift, Backspace |
+| Modules (`load`) | ⚠️ | Loads, but `entry()` is disabled |
+| Multitasking | ✅ | Dots `.` and `!` |
 
-## Known Limitations
+---
 
-| Issue | Status |
+## Comparison with L4 / K42
+
+| Aspect | L4 / K42 | Manpupuner_42 |
+|:---|:---|:---|
+| **Kernel size** | 12–50+ KB | **~18–20 KB** |
+| **Syscall count** | 10+ (with IPC) | **Exactly 7** |
+| **IPC** | Synchronous, fast (~5 µs) | Via files (IDs) |
+| **Scheduler** | In-kernel | **Outside the kernel (module)** |
+| **SMP / NUMA** | Yes | ❌ No |
+| **Hot-swap modules** | Yes (K42) | ❌ No |
+| **Linux compatibility** | Yes (L4Linux) | ❌ No (test processes only) |
+| **Complexity** | High | **Low (low entry barrier)** |
+| **Primary goal** | High-performance microkernel | **Proof of Concept / Principle demonstration** |
+
+---
+
+## ⚙️ Tested Environment
+
+The kernel was developed and tested on the following setup:
+
+| Component | Version |
 |:---|:---|
-| `load <module>` with entry() enabled | ❌ Causes reboot (disabled for safety) |
-| Arrow keys (↑ ↓ ← →) | ❌ Not supported |
-| Some keyboard keys (laptop) | ⚠️ May not work correctly |
-| IDT / interrupts | ⚠️ Not stable |
-| Automatic multitasking | ❌ Not implemented |
-| Real hardware | ⚠️ Untested |
+| **OS** | Ubuntu 24.04.4 LTS (Noble) |
+| **QEMU** | 8.2.2 |
+| **NASM** | 2.16.01 |
+| **GCC** | 13.3.0 |
+| **LD** | 2.42 |
+| **GRUB** | 2.12 |
+| **Xorriso** | 1.5.6 |
+
+```bash
+lsb_release -a
+No LSB modules are available.
+Distributor ID:  Ubuntu
+Description:     Ubuntu 24.04.4 LTS
+Release:         24.04
+Codename:        noble
+
+qemu-system-x86_64 --version | head -1
+QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.16)
+
+nasm -v
+NASM version 2.16.01
+
+gcc --version | head -1
+gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+
+ld --version | head -1
+GNU ld (GNU Binutils for Ubuntu) 2.42
+
+grub-mkrescue --version | head -1
+grub-mkrescue (GRUB) 2.12-1ubuntu7.3
+
+xorriso --version | head -1
+xorriso 1.5.6
+```
+
+---
+
+## 🔥 Heating Issues and Solutions
+
+When running the kernel in QEMU, the laptop may heat up due to high CPU usage. Below are the causes and how they are addressed in this project.
+
+### Causes
+
+1. **No hardware acceleration** (KVM/HVF) — QEMU emulates every instruction via TCG (software emulation), which loads the CPU up to 100%.
+
+2. **Full CPU core usage** — QEMU uses all available cores by default.
+
+3. **Uninterrupted idle loop** — the bare-metal kernel does not have ACPI or HLT-optimized idle states.
+
+### Solutions Implemented in This Project
+
+| Solution | How it's done |
+|:---|:---|
+| **Limit CPU cores** | `-smp cores=1` restricts QEMU to one core |
+| **Limit CPU usage** | `cpulimit -p $PID -l 50` caps CPU at 50% |
+| **CPU affinity** | `taskset -c 0` binds QEMU to a single core |
+| **Fast termination** | Run with `-no-shutdown -monitor stdio` and exit via `Ctrl+C` or QEMU monitor |
+| **Shutdown port** | (Optional) The kernel can send `outw(0x2000, 0x0604)` to shut down QEMU |
+
+### Example `run.sh` with CPU Limiting
+
+```bash
+#!/bin/bash
+
+echo "=========================================="
+echo "Running Manpupuner_42 v0.3-alpha (CPU limited)"
+echo "=========================================="
+
+# Start QEMU in background with 1 core
+qemu-system-x86_64 -cdrom manpupuner_42_v0.3.iso -m 256M -smp cores=1 -no-shutdown -monitor stdio &
+
+sleep 1
+PID=$(pgrep -f qemu-system-x86_64)
+
+if [ -n "$PID" ]; then
+    echo "QEMU PID: $PID"
+    echo "Limiting CPU to 50%..."
+    cpulimit -p $PID -l 50
+else
+    echo "QEMU not found. Check if it's running."
+fi
+```
+
+### Additional Tips
+
+- Always close QEMU via `Ctrl+C` or the monitor (`Ctrl+Alt+2` → `quit`).
+- Use `htop` to check CPU usage after each session.
+- If QEMU hangs in the background, kill it with:
+  ```bash
+  pkill -9 -f qemu-system-x86_64
+  ```
+
+---
+
+## ⚠️ Known Issues (v0.3-alpha)
+
+| Issue | Description |
+|:---|:---|
+| **`load <module>`** | Loading a module with `entry()` enabled causes a system reboot. Temporarily disabled. |
+| **Arrow keys (↑ ↓ ← →)** | Not supported. Do not work. |
+| **Real hardware** | Untested. Use only in QEMU. |
+| **`shutdown` command** | Not implemented. Exit via `Ctrl+C` or QEMU monitor. |
+
+---
 
 ## Modules
 
@@ -274,45 +388,50 @@ All additional functionality is designed to be implemented as separate modules:
 - **Graphics module** (planned) — VESA graphics
 - **File system modules** (planned) — FAT32, ext2
 
+---
+
 ## Design Principles
 
 1. **Minimal kernel** — only 7 calls, ~18-20 KB
 2. **Modular design** — everything else is separate
 3. **Simple interface** — ID-based access
 4. **Transparent debugging** — logging and traceability (UART)
-5. **Isolation** — contexts for different layers
-6. **Cross-architecture inspiration** — best ideas from monolithic, microkernel, hybrid, exokernel, and unikernel
+5. **Cross-architecture inspiration** — best ideas from monolithic, microkernel, hybrid, exokernel, and unikernel
+6. **Proof of Concept** — not a production kernel
+
+---
 
 ## Project Structure
 
 ```
 manpupuner_kernel/
-├── boot.asm           # Bootloader (Multiboot)
-├── build.sh           # ISO build script
+├── boot.asm          # Bootloader (Multiboot). Context switch, IDT.
+├── build.sh          # Build script: clean → compile → ISO.
 ├── docs/
-│   └── architecture.md # This file
-├── .gitignore         # Ignored files
-├── kernel.c           # Kernel (7 syscalls, VGA, UART, FS, memory, processes, shell)
-├── LICENSE            # MIT License
-├── linker.ld          # Linker script for kernel
-├── Makefile           # Build system
-├── modules/
-│   ├── keyboard_module.c # Keyboard module
-│   └── module.ld      # Linker script for modules
-├── README.md          # Project description
-└── run.sh             # QEMU launcher
+│   └── architecture.md  # This file.
+├── grub.cfg          # GRUB configuration.
+├── kernel.c          # Kernel: 7 syscalls, VGA, UART, IDT, timer, FS, memory, shell.
+├── LICENSE           # MIT License.
+├── linker.ld         # Linker script.
+├── Makefile          # Build: nasm + gcc + ld.
+├── README.md         # Project description.
+└── run.sh            # QEMU launcher with ISO.
 ```
+
+---
 
 ## History
 
 The idea was born in a discussion between Kaskov Aleksandr and DeepSeek AI. The goal was to prove that a kernel can be minimal and still support multiple ecosystems (POSIX, NT) through translation layers.
 
-**Two-stage development:**
+**Development stages:**
 
 1. **v0.1 — Python PoC** — concept validation: [https://github.com/kafemin/Manpupuner_42](https://github.com/kafemin/Manpupuner_42)
-2. **v0.2-alpha — C/Assembly kernel** — implementation: [https://github.com/kafemin/manpupuner_kernel](https://github.com/kafemin/manpupuner_kernel)
+2. **v0.3-alpha — C/Assembly kernel with interrupts and multitasking** — current stable version: [https://github.com/kafemin/manpupuner_kernel](https://github.com/kafemin/manpupuner_kernel)
 
-> *"People need to see the principle, and then... everything will take its course."*
+> **Note:** The development of the C/Assembly kernel (v0.2-alpha) is now fully integrated into the v0.3-alpha release. The v0.3 branch is the main line of development and contains all features previously planned for v0.2.
+
+---
 
 ## Real Hardware Warning
 
@@ -323,7 +442,7 @@ This kernel has **not** been tested on real hardware. The author has only tested
 ## Further Reading
 
 - **Monolithic Kernel:** [Linux Kernel Documentation](https://www.kernel.org/doc/)
-- **Microkernel:** [MINIX 3](https://www.minix3.org/), [L4](https://l4hq.org/)
-- **Hybrid Kernel:** [Windows NT Architecture](https://learn.microsoft.com/en-us/windows/win32/sysinfo/windows-kernel)
-- **Exokernel:** [MIT Exokernel Paper](https://pdos.csail.mit.edu/archive/exo/)
+- **Microkernel:** [L4Re](https://l4re.org/)
+- **Hybrid Kernel:** [Overview of Windows Architecture](https://learn.microsoft.com/ru-ru/windows-hardware/drivers/gettingstarted/overview-of-windows-architecture)
+- **Exokernel:** [MIT Exokernel Operating System](https://pdos.csail.mit.edu/archive/exo/)
 - **Unikernel:** [MirageOS](https://mirage.io/), [IncludeOS](https://www.includeos.org/)

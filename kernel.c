@@ -1,9 +1,27 @@
-// kernel.c — ядро Manpupuner_42 (v0.2-engine) — БЕЗ IDT
+// kernel.c — Manpupuner_42 v0.3-alpha
+// Minimal hybrid arbiter kernel with 7 syscalls, IDT, timer, and multitasking
 #include <stdint.h>
 #include <stddef.h>
+#include <stdarg.h>
 
 // ============================================================
-// 1. VGA-вывод
+// Function prototypes
+// ============================================================
+
+void test_process();
+void shell_process();
+void readline(char* buffer, int max_len);
+void handle_command(char* cmd);
+void yield();
+void print_help();
+void print_version();
+void print_syscalls();
+void cmd_ls();
+void cmd_read(uint32_t id);
+void cmd_write(uint32_t id, const char* data);
+
+// ============================================================
+// 1. VGA output
 // ============================================================
 
 #define VGA_MEMORY ((char*)0xB8000)
@@ -77,24 +95,23 @@ void itoa(int num, char* buffer) {
 }
 
 void printk(const char* format, ...) {
-    char* args = (char*)&format + sizeof(format);
+    va_list args;
+    va_start(args, format);
+    
     while (*format) {
         if (*format == '%' && *(format + 1)) {
             format++;
             if (*format == 'c') {
-                char c = *((char*)args);
-                args += sizeof(char);
+                char c = (char)va_arg(args, int);
                 putchar(c);
             } else if (*format == 's') {
-                char* s = *((char**)args);
-                args += sizeof(char*);
+                char* s = va_arg(args, char*);
                 while (*s) {
                     putchar(*s);
                     s++;
                 }
             } else if (*format == 'd') {
-                int num = *((int*)args);
-                args += sizeof(int);
+                int num = va_arg(args, int);
                 char buf[16];
                 itoa(num, buf);
                 char* p = buf;
@@ -103,8 +120,7 @@ void printk(const char* format, ...) {
                     p++;
                 }
             } else if (*format == 'x') {
-                uint32_t num = *((uint32_t*)args);
-                args += sizeof(uint32_t);
+                uint32_t num = va_arg(args, uint32_t);
                 const char hex[] = "0123456789ABCDEF";
                 char buf[16];
                 buf[0] = '0';
@@ -128,6 +144,7 @@ void printk(const char* format, ...) {
         }
         format++;
     }
+    va_end(args);
 }
 
 void clear_screen() {
@@ -178,11 +195,109 @@ void uart_printk(const char* str) {
 }
 
 // ============================================================
-// 3. Планировщик процессов
+// 3. IDT
+// ============================================================
+
+#define IDT_SIZE 256
+#define IRQ0 32
+
+typedef struct {
+    uint16_t base_low;
+    uint16_t selector;
+    uint8_t reserved;
+    uint8_t flags;
+    uint16_t base_high;
+} __attribute__((packed)) idt_entry_t;
+
+typedef struct {
+    uint16_t limit;
+    uint32_t base;
+} __attribute__((packed)) idt_descriptor_t;
+
+idt_entry_t idt[IDT_SIZE];
+idt_descriptor_t idt_desc;
+
+extern void load_idt();
+extern void reload_idt();
+extern void irq_handler();
+
+void set_idt_gate(int num, uint32_t base, uint16_t selector, uint8_t flags) {
+    idt[num].base_low = base & 0xFFFF;
+    idt[num].base_high = (base >> 16) & 0xFFFF;
+    idt[num].selector = selector;
+    idt[num].reserved = 0;
+    idt[num].flags = flags;
+}
+
+void init_idt() {
+    for (int i = 0; i < IDT_SIZE; i++) {
+        set_idt_gate(i, 0, 0, 0);
+    }
+    uint32_t handler_addr = (uint32_t)irq_handler;
+    printk("irq_handler address: 0x%x\n", handler_addr);
+    set_idt_gate(IRQ0, handler_addr, 0x10, 0x8E);
+    idt_desc.limit = IDT_SIZE * sizeof(idt_entry_t) - 1;
+    idt_desc.base = (uint32_t)&idt;
+    load_idt();
+    printk("IDT loaded\n");
+}
+
+// ============================================================
+// 4. PIC
+// ============================================================
+
+#define PIC_MASTER_CMD 0x20
+#define PIC_MASTER_DATA 0x21
+#define PIC_SLAVE_CMD 0xA0
+#define PIC_SLAVE_DATA 0xA1
+
+void pic_remap() {
+    outb(PIC_MASTER_CMD, 0x11);
+    outb(PIC_SLAVE_CMD, 0x11);
+    outb(PIC_MASTER_DATA, 0x20);
+    outb(PIC_SLAVE_DATA, 0x28);
+    outb(PIC_MASTER_DATA, 0x04);
+    outb(PIC_SLAVE_DATA, 0x02);
+    outb(PIC_MASTER_DATA, 0x01);
+    outb(PIC_SLAVE_DATA, 0x01);
+    outb(PIC_MASTER_DATA, 0xFE);
+    outb(PIC_SLAVE_DATA, 0xFF);
+    printk("PIC remapped: IRQ0 → vector 0x20\n");
+}
+
+// ============================================================
+// 5. Timer (PIT)
+// ============================================================
+
+#define PIT_PORT 0x40
+#define PIT_CMD_PORT 0x43
+
+static volatile int need_yield = 0;
+static volatile int irq_count = 0;
+
+void irq_handler_c() {
+    irq_count++;
+    if (irq_count % 10 == 0) {
+        printk("!");
+    }
+    reload_idt();
+    need_yield = 1;
+    outb(0x20, 0x20);
+}
+
+void init_timer() {
+    outb(PIT_CMD_PORT, 0x36);
+    outb(PIT_PORT, 0x00);
+    outb(PIT_PORT, 0x00);
+    printk("Timer initialized (100 Hz)\n");
+}
+
+// ============================================================
+// 6. Scheduler
 // ============================================================
 
 #define MAX_PROCESSES 16
-#define PROCESS_STACK_SIZE 4096
+#define PROCESS_STACK_SIZE 8192
 
 typedef enum {
     PROCESS_STATE_READY,
@@ -202,7 +317,7 @@ static process_t processes[MAX_PROCESSES];
 static uint32_t process_count = 0;
 static uint32_t current_pid = 0;
 
-extern void switch_context(uint32_t* old_esp, uint32_t* old_eip,
+extern void switch_context(uint32_t* old_esp, uint32_t* old_eip, 
                            uint32_t new_esp, uint32_t new_eip);
 
 void process_init() {
@@ -220,22 +335,34 @@ void process_init() {
 void yield() {
     if (process_count < 2) return;
 
-    uint32_t old_pid = current_pid;
-    do {
-        current_pid = (current_pid + 1) % MAX_PROCESSES;
-    } while (processes[current_pid].state != PROCESS_STATE_READY);
+    uint32_t next_pid = (current_pid + 1) % MAX_PROCESSES;
+    uint32_t start_pid = next_pid;
 
-    process_t* old = &processes[old_pid];
-    process_t* new = &processes[current_pid];
+    do {
+        if (processes[next_pid].state == PROCESS_STATE_READY) {
+            break;
+        }
+        next_pid = (next_pid + 1) % MAX_PROCESSES;
+    } while (next_pid != start_pid);
+
+    if (processes[next_pid].state != PROCESS_STATE_READY) {
+        return;
+    }
+
+    process_t* old = &processes[current_pid];
+    process_t* new = &processes[next_pid];
+
+    if (old == new) return;
 
     old->state = PROCESS_STATE_READY;
     new->state = PROCESS_STATE_RUNNING;
+    current_pid = next_pid;
 
     switch_context(&old->esp, &old->eip, new->esp, new->eip);
 }
 
 // ============================================================
-// 4. Виртуальная ФС
+// 7. Virtual filesystem
 // ============================================================
 
 #define MAX_FILES 16
@@ -285,81 +412,77 @@ void init_filesystem() {
     fs_add_file("/home/hello.txt", "Hello from Manpupuner_42!", 27);
     fs_add_file("/README.md", "# Manpupuner_42\n\nPure Kernel Demo\n\n7 syscalls", 50);
     fs_add_file("/etc/hosts", "127.0.0.1 localhost", 20);
-
-    extern uint8_t _binary_modules_keyboard_module_bin_start[];
-    extern uint8_t _binary_modules_keyboard_module_bin_end[];
-    int size = _binary_modules_keyboard_module_bin_end - _binary_modules_keyboard_module_bin_start;
-    fs_add_file("keyboard.bin", (const char*)_binary_modules_keyboard_module_bin_start, size);
 }
 
 // ============================================================
-// 5. /dev/keyboard
-// ============================================================
-
-#define DEV_KEYBOARD 100
-static char keyboard_buffer[256];
-static int kb_head = 0;
-static int kb_tail = 0;
-
-int sys_read_keyboard(char* buffer, uint32_t size) {
-    int count = 0;
-    while (kb_head != kb_tail && count < size) {
-        buffer[count++] = keyboard_buffer[kb_tail];
-        kb_tail = (kb_tail + 1) % 256;
-    }
-    return count;
-}
-
-int sys_write_file_wrapper(uint32_t id, const char* data, uint32_t size) {
-    if (id == DEV_KEYBOARD) {
-        for (uint32_t i = 0; i < size; i++) {
-            keyboard_buffer[kb_head] = data[i];
-            kb_head = (kb_head + 1) % 256;
-        }
-        return size;
-    }
-    file_t* f = fs_get_file(id);
-    if (!f) return -1;
-    uint32_t write_size = size;
-    if (write_size > MAX_CONTENT - 1) write_size = MAX_CONTENT - 1;
-    for (uint32_t i = 0; i < write_size; i++) {
-        f->content[i] = data[i];
-    }
-    f->content[write_size] = '\0';
-    f->size = write_size;
-    return write_size;
-}
-
-// ============================================================
-// 6. Менеджер памяти
+// 8. Memory manager
 // ============================================================
 
 #define MAX_MEMORY_BLOCKS 32
+#define KERNEL_HEAP_START 0x00108000
 
 typedef struct {
     uint32_t id;
     uint32_t size;
     int used;
+    void* addr;
 } memory_block_t;
 
 static memory_block_t memory_blocks[MAX_MEMORY_BLOCKS];
+static uint32_t memory_counter = 0;
+static uint32_t heap_top = KERNEL_HEAP_START;
 
 void memory_init() {
     for (int i = 0; i < MAX_MEMORY_BLOCKS; i++) {
         memory_blocks[i].used = 0;
         memory_blocks[i].id = 0;
         memory_blocks[i].size = 0;
+        memory_blocks[i].addr = 0;
     }
+    memory_counter = 0;
+    heap_top = KERNEL_HEAP_START;
+}
+
+void* sys_alloc_memory(uint32_t size) {
+    size = (size + 3) & ~3;
+    for (int i = 0; i < MAX_MEMORY_BLOCKS; i++) {
+        if (!memory_blocks[i].used) {
+            void* addr = (void*)heap_top;
+            heap_top += size;
+            memory_counter++;
+            memory_blocks[i].id = memory_counter;
+            memory_blocks[i].size = size;
+            memory_blocks[i].used = 1;
+            memory_blocks[i].addr = addr;
+            printk("Allocated block %d at 0x%x (%d bytes)\n", 
+                   memory_blocks[i].id, addr, size);
+            return addr;
+        }
+    }
+    printk("Memory allocation failed: no free blocks\n");
+    return 0;
+}
+
+int sys_free_memory(uint32_t id) {
+    for (int i = 0; i < MAX_MEMORY_BLOCKS; i++) {
+        if (memory_blocks[i].id == id && memory_blocks[i].used) {
+            memory_blocks[i].used = 0;
+            memory_blocks[i].id = 0;
+            memory_blocks[i].size = 0;
+            memory_blocks[i].addr = 0;
+            printk("Freed block %d\n", id);
+            return 0;
+        }
+    }
+    printk("Memory block %d not found\n", id);
+    return -1;
 }
 
 // ============================================================
-// 7. Системные вызовы (7 штук)
+// 9. System calls (7 total)
 // ============================================================
 
 int sys_read_file(uint32_t id, char* buffer, uint32_t size) {
-    if (id == DEV_KEYBOARD) {
-        return sys_read_keyboard(buffer, size);
-    }
     file_t* f = fs_get_file(id);
     if (!f) return -1;
     uint32_t read_size = size;
@@ -371,7 +494,16 @@ int sys_read_file(uint32_t id, char* buffer, uint32_t size) {
 }
 
 int sys_write_file(uint32_t id, const char* data, uint32_t size) {
-    return sys_write_file_wrapper(id, data, size);
+    file_t* f = fs_get_file(id);
+    if (!f) return -1;
+    uint32_t write_size = size;
+    if (write_size > MAX_CONTENT - 1) write_size = MAX_CONTENT - 1;
+    for (uint32_t i = 0; i < write_size; i++) {
+        f->content[i] = data[i];
+    }
+    f->content[write_size] = '\0';
+    f->size = write_size;
+    return write_size;
 }
 
 uint32_t* sys_list_files(uint32_t* count) {
@@ -385,40 +517,12 @@ void sys_sleep(uint32_t milliseconds) {
     }
 }
 
-uint32_t sys_alloc_memory(uint32_t size) {
-    for (int i = 0; i < MAX_MEMORY_BLOCKS; i++) {
-        if (!memory_blocks[i].used) {
-            memory_blocks[i].id = i + 1;
-            memory_blocks[i].size = size;
-            memory_blocks[i].used = 1;
-            printk("Allocated block %d (%d bytes)\n", i + 1, size);
-            return i + 1;
-        }
-    }
-    printk("Memory allocation failed: no free blocks\n");
-    return 0;
-}
-
-int sys_free_memory(uint32_t id) {
-    for (int i = 0; i < MAX_MEMORY_BLOCKS; i++) {
-        if (memory_blocks[i].id == id && memory_blocks[i].used) {
-            memory_blocks[i].used = 0;
-            memory_blocks[i].id = 0;
-            memory_blocks[i].size = 0;
-            printk("Freed block %d\n", id);
-            return 0;
-        }
-    }
-    printk("Memory block %d not found\n", id);
-    return -1;
-}
-
 uint32_t sys_create_process(const char* name, void (*entry)()) {
     if (process_count >= MAX_PROCESSES) {
         printk("Maximum processes reached\n");
         return 0;
     }
-
+    
     int slot = -1;
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (processes[i].state == PROCESS_STATE_BLOCKED && processes[i].pid == 0) {
@@ -426,6 +530,7 @@ uint32_t sys_create_process(const char* name, void (*entry)()) {
             break;
         }
     }
+    
     if (slot == -1) {
         printk("No free process slot\n");
         return 0;
@@ -437,128 +542,153 @@ uint32_t sys_create_process(const char* name, void (*entry)()) {
         return 0;
     }
 
+    for (int i = 0; i < PROCESS_STACK_SIZE / 4; i++) {
+        stack[i] = 0;
+    }
+    
+    uint32_t* local_esp = (uint32_t*)((uint32_t)stack + PROCESS_STACK_SIZE);
+
+    local_esp--; 
+    *local_esp = (uint32_t)entry; 
+
+    local_esp--; *local_esp = 0;
+    local_esp--; *local_esp = 0;
+    local_esp--; *local_esp = 0;
+    local_esp--; *local_esp = 0;
+
     process_t* p = &processes[slot];
     p->pid = slot + 1;
     p->state = PROCESS_STATE_READY;
-    p->esp = (uint32_t)(stack + PROCESS_STACK_SIZE - 1);
+    p->esp = (uint32_t)local_esp;
     p->eip = (uint32_t)entry;
-
+    
     int i = 0;
     while (name[i] && i < 31) {
         p->name[i] = name[i];
         i++;
     }
     p->name[i] = '\0';
-
+    
     process_count++;
-    printk("Process %d '%s' created, entry at 0x%x\n", p->pid, p->name, p->eip);
+    printk("Process %d '%s' created, entry at 0x%x, stack at 0x%x\n", p->pid, p->name, p->eip, p->esp);
     return p->pid;
 }
 
 // ============================================================
-// 8. Тестовый процесс
+// 10. Keyboard (asynchronous with yield)
+// ============================================================
+
+#define KEYBOARD_PORT 0x60
+#define KEYBOARD_STATUS 0x64
+
+static const char scancode_table[] = {
+    0,   0,  '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b', 0,
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0, 'a', 's',
+    'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\', 'z', 'x', 'c', 'v',
+    'b', 'n', 'm', ',', '.', '/', 0, '*', 0, ' ', 0, 0, 0, 0, 0, 0,
+};
+
+char read_key() {
+    static int shift = 0;
+    while (1) {
+        if ((inb(KEYBOARD_STATUS) & 1) == 0) {
+            yield();
+            continue;
+        }
+        
+        uint8_t scancode = inb(KEYBOARD_PORT);
+
+        if (scancode == 0x2A || scancode == 0x36) { shift = 1; continue; }
+        if (scancode == 0xAA || scancode == 0xB6) { shift = 0; continue; }
+
+        if (scancode == 0xE0) {
+            while ((inb(KEYBOARD_STATUS) & 1) == 0) { yield(); }
+            uint8_t ext = inb(KEYBOARD_PORT);
+            if (ext == 0x48) return 'A';
+            if (ext == 0x50) return 'B';
+            if (ext == 0x4B) return 'D';
+            if (ext == 0x4D) return 'C';
+            continue;
+        }
+
+        if (scancode & 0x80) continue;
+
+        char c = 0;
+        if (scancode == 0x39) c = ' ';
+        else if (scancode == 0x1C) c = '\n';
+        else if (scancode == 0x0E) c = '\b';
+        else if (scancode < sizeof(scancode_table)) {
+            c = scancode_table[scancode];
+        }
+
+        if (c == 0) continue;
+
+        if (c >= 'a' && c <= 'z') {
+            if (shift) c = c - 'a' + 'A';
+        } else if (shift) {
+            switch (c) {
+                case '1': c = '!'; break; case '2': c = '@'; break; case '3': c = '#'; break;
+                case '4': c = '$'; break; case '5': c = '%'; break; case '6': c = '^'; break;
+                case '7': c = '&'; break; case '8': c = '*'; break; case '9': c = '('; break;
+                case '0': c = ')'; break; case '-': c = '_'; break; case '=': c = '+'; break;
+                case '[': c = '{'; break; case ']': c = '}'; break; case '\\': c = '|'; break;
+                case ';': c = ':'; break; case '\'': c = '"'; break; case ',': c = '<'; break;
+                case '.': c = '>'; break; case '/': c = '?'; break;
+            }
+        }
+
+        return c;
+    }
+}
+
+void readline(char* buffer, int max_len) {
+    int i = 0;
+    while (1) {
+        char c = read_key();
+        if (c == '\n') {
+            buffer[i] = '\0';
+            printk("\n");
+            return;
+        } else if (c == '\b') {
+            if (i > 0) {
+                i--;
+                printk("\b \b");
+            }
+        } else if (i < max_len - 1) {
+            buffer[i++] = c;
+            printk("%c", c);
+        }
+    }
+}
+
+// ============================================================
+// 11. Processes
 // ============================================================
 
 void test_process() {
     while (1) {
         printk(".");
-        for (volatile int i = 0; i < 100000; i++);
+        for (volatile int i = 0; i < 4000000; i++);
+        yield();
+    }
+}
+
+void shell_process() {
+    char cmd[256];
+    while (1) {
+        printk("S> ");
+        readline(cmd, 256);
+        handle_command(cmd);
+        yield();
     }
 }
 
 // ============================================================
-// 9. Загрузчик модулей
+// 12. Shell
 // ============================================================
-
-#define MODULE_MAGIC 0x4D504B32
-
-struct module_header {
-    uint32_t magic;
-    uint32_t entry_point;
-    uint32_t data_size;
-};
-
-void load_module(const char* filename) {
-    printk("Loading module: %s\n", filename);
-
-    // 1. Ищем файл
-    uint32_t file_id = 0;
-    uint32_t count;
-    uint32_t* ids = sys_list_files(&count);
-    int found = 0;
-
-    for (uint32_t i = 0; i < count; i++) {
-        file_t* f = fs_get_file(ids[i]);
-        int match = 1;
-        for (int j = 0; j < 32; j++) {
-            if (f->name[j] != filename[j]) { match = 0; break; }
-            if (f->name[j] == '\0') break;
-        }
-        if (match) {
-            file_id = ids[i];
-            found = 1;
-            break;
-        }
-    }
-
-    if (!found) {
-        printk("Module file not found: %s\n", filename);
-        return;
-    }
-
-    // 2. Читаем файл
-    char buffer[512];
-    int size = sys_read_file(file_id, buffer, 512);
-    if (size < sizeof(struct module_header)) {
-        printk("Module too small or corrupted\n");
-        return;
-    }
-
-    // 3. Проверяем магическое число
-    struct module_header* header = (struct module_header*)buffer;
-    if (header->magic != MODULE_MAGIC) {
-        printk("Invalid module magic: 0x%x (expected 0x%x)\n", header->magic, MODULE_MAGIC);
-        return;
-    }
-
-    printk("Module loaded: magic=0x%x, entry=0x%x, data_size=%d\n",
-           header->magic, header->entry_point, header->data_size);
-
-    // 4. Подготавливаем стек для модуля
-    uint32_t* module_stack = (uint32_t*)sys_alloc_memory(4096);
-    if (!module_stack) {
-        printk("Failed to allocate stack for module\n");
-        return;
-    }
-
-    // 5. Вычисляем точку входа
-    void (*entry)() = (void (*)())((uint32_t)header + header->entry_point);
-    printk("Starting module at 0x%x\n", entry);
-
-    // 6. Передаём системные вызовы в модуль (глобальные переменные)
-    // Для этого нужно, чтобы модуль знал адреса sys_write_file и sys_read_file
-    // Пока просто вызываем entry
-    entry();
-}
-
-// ============================================================
-// 10. Emergency shell
-// ============================================================
-
-void reboot() {
-    printk("Rebooting...\n");
-    asm volatile("int $0x19");
-}
-
-void dump() {
-    printk("Dump: memory not implemented yet.\n");
-}
 
 void print_help() {
     printk("Commands:\n");
-    printk("  reboot      - restart system\n");
-    printk("  dump        - memory dump (stub)\n");
-    printk("  load <file> - load module\n");
     printk("  help        - this list\n");
     printk("  version     - show kernel version\n");
     printk("  syscalls    - list 7 system calls\n");
@@ -571,19 +701,14 @@ void print_help() {
 }
 
 void print_version() {
-    printk("Manpupuner_42 v0.2-engine\n");
-    printk("Built: 25.06.2026\n");
+    printk("Manpupuner_42 v0.3-alpha\n");
+    printk("Built: 30.06.2026\n");
 }
 
 void print_syscalls() {
     printk("7 system calls:\n");
-    printk("  1. READ_FILE\n");
-    printk("  2. WRITE_FILE\n");
-    printk("  3. CREATE_PROCESS\n");
-    printk("  4. SLEEP\n");
-    printk("  5. ALLOC_MEMORY\n");
-    printk("  6. FREE_MEMORY\n");
-    printk("  7. LIST_FILES\n");
+    printk("  1. READ_FILE\n  2. WRITE_FILE\n  3. CREATE_PROCESS\n");
+    printk("  4. SLEEP\n  5. ALLOC_MEMORY\n  6. FREE_MEMORY\n  7. LIST_FILES\n");
 }
 
 void cmd_ls() {
@@ -619,19 +744,7 @@ void cmd_write(uint32_t id, const char* data) {
 }
 
 void handle_command(char* cmd) {
-    if (cmd[0] == 'r' && cmd[1] == 'e' && cmd[2] == 'b' && cmd[3] == 'o' && cmd[4] == 'o' && cmd[5] == 't') {
-        reboot();
-    } else if (cmd[0] == 'd' && cmd[1] == 'u' && cmd[2] == 'm' && cmd[3] == 'p') {
-        dump();
-    } else if (cmd[0] == 'l' && cmd[1] == 'o' && cmd[2] == 'a' && cmd[3] == 'd') {
-        char* name = cmd + 5;
-        while (*name == ' ') name++;
-        if (*name) {
-            load_module(name);
-        } else {
-            printk("Usage: load <filename>\n");
-        }
-    } else if (cmd[0] == 'h' && cmd[1] == 'e' && cmd[2] == 'l' && cmd[3] == 'p') {
+    if (cmd[0] == 'h' && cmd[1] == 'e' && cmd[2] == 'l' && cmd[3] == 'p') {
         print_help();
     } else if (cmd[0] == 'v' && cmd[1] == 'e' && cmd[2] == 'r' && cmd[3] == 's' && cmd[4] == 'i' && cmd[5] == 'o' && cmd[6] == 'n') {
         print_version();
@@ -680,7 +793,7 @@ void handle_command(char* cmd) {
         char* name = cmd + 4;
         while (*name == ' ') name++;
         if (*name) {
-            sys_create_process(name, 0);
+            sys_create_process(name, test_process);
         } else {
             printk("Usage: run <name>\n");
         }
@@ -690,70 +803,7 @@ void handle_command(char* cmd) {
 }
 
 // ============================================================
-// 11. Клавиатура (временное решение)
-// ============================================================
-
-#define KEYBOARD_PORT 0x60
-#define KEYBOARD_STATUS 0x64
-
-static const char scancode_table[] = {
-    0,   0,  '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b', 0,
-    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0, 'a', 's',
-    'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\', 'z', 'x', 'c', 'v',
-    'b', 'n', 'm', ',', '.', '/', 0, '*', 0, ' ', 0, 0, 0, 0, 0, 0,
-};
-
-char read_key() {
-    static int shift = 0;
-    while (1) {
-        if ((inb(KEYBOARD_STATUS) & 1) == 0) continue;
-        uint8_t scancode = inb(KEYBOARD_PORT);
-
-        if (scancode == 0xAA || scancode == 0xB6) { shift = 0; continue; }
-        if (scancode == 0x2A || scancode == 0x36) { shift = 1; continue; }
-
-        if (scancode & 0x80) continue;
-
-        char c = 0;
-        if (scancode == 0x39) c = ' ';
-        else if (scancode == 0x1C) c = '\n';
-        else if (scancode == 0x0E) c = '\b';
-        else if (scancode < sizeof(scancode_table)) {
-            c = scancode_table[scancode];
-        }
-
-        if (shift) {
-            if (c == '-') c = '_';
-            else if (c == '/') c = '?';
-            else if (c >= 'a' && c <= 'z') c = c - 'a' + 'A';
-        }
-
-        if (c) return c;
-    }
-}
-
-void readline(char* buffer, int max_len) {
-    int i = 0;
-    while (1) {
-        char c = read_key();
-        if (c == '\n') {
-            buffer[i] = '\0';
-            printk("\n");
-            return;
-        } else if (c == '\b') {
-            if (i > 0) {
-                i--;
-                printk("\b \b");
-            }
-        } else if (i < max_len - 1) {
-            buffer[i++] = c;
-            printk("%c", c);
-        }
-    }
-}
-
-// ============================================================
-// 12. Точка входа
+// 13. Entry point
 // ============================================================
 
 void kernel_main() {
@@ -763,17 +813,34 @@ void kernel_main() {
     memory_init();
     process_init();
 
-    printk("========================================\n");
-    printk("Manpupuner_42 v0.2-engine (UART enabled)\n");
-    printk("========================================\n");
-    uart_printk("[UART] Kernel started\n");
+    printk("Kernel started\n");
 
-    sys_create_process("test", test_process);
+    init_idt();
+    pic_remap();
+    init_timer();
 
-    char cmd[256];
+    processes[0].pid = 0;
+    processes[0].state = PROCESS_STATE_RUNNING;
+    processes[0].name[0] = 'k';
+    processes[0].name[1] = 'e';
+    processes[0].name[2] = 'r';
+    processes[0].name[3] = '\0';
+    process_count = 1;
+    current_pid = 0;
+
+    printk("Enabling interrupts...\n");
+    __asm__ volatile("sti");
+    printk("Interrupts enabled\n");
+
+    sys_create_process("shell", shell_process);
+    sys_create_process("test1", test_process);
+    sys_create_process("test2", test_process);
+
     while (1) {
-        printk("> ");
-        readline(cmd, 256);
-        handle_command(cmd);
+        if (need_yield) {
+            need_yield = 0;
+            yield();
+        }
+        __asm__ volatile("hlt");
     }
 }
